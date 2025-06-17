@@ -243,9 +243,9 @@ def main():
     main entry point
     """
 
-    work = {'mass': 3.463388126201571, 'lf': 0.15597534362552312, 'tlad': 1.0, 'vgain': 1.3}#0.90338203837889}
+    work = {'mass': 3.463388126201571, 'lf': 0.15597534362552312, 'tlad': 0.82461887897713965, 'vgain': 1.375}#0.90338203837889}
     
-    with open('config_yas_marina_map.yaml') as file:
+    with open('config_example_map.yaml') as file:
         conf_dict = yaml.load(file, Loader=yaml.FullLoader)
     conf = Namespace(**conf_dict)
 
@@ -269,7 +269,34 @@ def main():
 
         planner.render_waypoints(env_renderer)
 
-    env = gym.make('f110_gym:f110-v0', map=conf.map_path, map_ext=conf.map_ext, num_agents=1, timestep=1/60)
+# Define full set of vehicle parameters, including sv_max
+    vehicle_params = {
+        'mu': 1.0489,  # Initial friction coefficient
+        'C_Sf': 4.718,  # Cornering stiffness coefficient, front
+        'C_Sr': 5.4562,  # Cornering stiffness coefficient, rear
+        'lf': 0.15875,  # Distance from center of gravity to front axle
+        'lr': 0.17145,  # Distance from center of gravity to rear axle
+        'h': 0.074,  # Height of center of gravity
+        'm': 3.74,  # Total mass of the vehicle
+        'I': 0.04712,  # Moment of inertia about the z-axis
+        's_min': -0.4189,  # Minimum steering angle
+        's_max': 0.4189,  # Maximum steering angle
+        'sv_min': -3.2,  # Minimum steering velocity
+        'sv_max': 3.2,  # Maximum steering velocity
+        'v_switch': 7.319,  # Switching velocity
+        'a_max': 9.51,  # Maximum longitudinal acceleration
+        'v_min': -5.0,  # Minimum longitudinal velocity
+        'v_max': 20.0,  # Maximum longitudinal velocity
+        'width': 0.31,  # Vehicle width
+        'length': 0.58  # Vehicle length
+    }
+
+    # List of friction values to cycle through after each lap
+    friction_values = [0.5, 0.5, 0.3]  # Adjust as needed
+    friction_index = 0  # Track current friction value index
+
+    # Initialize environment with full parameter set
+    env = gym.make('f110_gym:f110-v0', map=conf.map_path, map_ext=conf.map_ext, num_agents=1, timestep=0.01, integrator=Integrator.RK4, params=vehicle_params)
     env.add_render_callback(render_callback)
     
     obs, step_reward, done, info = env.reset(np.array([[conf.sx, conf.sy, conf.stheta]]))
@@ -277,17 +304,57 @@ def main():
 
     laptime = 0.0
     start = time.time()
+    lap_count = 0  # Manual lap counter
+    start_pos = np.array([conf.sx, conf.sy])  # Start/finish line position
+    prev_pos = start_pos  # Track previous position
+    crossed_start = False  # Track if car is approaching start/finish line
 
     while not done:
         speed, steer = planner.plan(obs['poses_x'][0], obs['poses_y'][0], obs['poses_theta'][0], work['tlad'], work['vgain'])
         obs, step_reward, done, info = env.step(np.array([[steer, speed]]))
-        # print(env.sim.agents[0].state)
-        print(env.sim.agents[0].accel, env.sim.agents[0].steer_angle_vel)
-
         laptime += step_reward
         env.render(mode='human')
-        
+
+        # Get current position
+        current_pos = np.array([obs['poses_x'][0], obs['poses_y'][0]])
+
+        # Check if car crosses the start/finish line
+        dist_to_start = np.linalg.norm(current_pos - start_pos)
+        if dist_to_start < 0.5 and not crossed_start:  # Threshold for proximity to start line
+            prev_dist = np.linalg.norm(prev_pos - start_pos)
+            if prev_dist > dist_to_start:
+                lap_count += 1
+                print(f"Start of Lap {lap_count}: Environment Parameters")
+                for key, value in env.params.items():
+                    print(f"  {key}: {value}")
+                
+                # Update friction for the next lap (after current lap ends)
+                if lap_count == 1:  # Skip on first lap to avoid immediate change
+                    friction_index = (friction_index + 1) % len(friction_values)  # Cycle through friction values
+                    new_mu = friction_values[friction_index]
+                    print(f"Changing friction coefficient to mu={new_mu} for Lap {lap_count}")
+                    # Update only mu, preserving other parameters
+                    updated_params = env.params.copy()  # Copy current params to preserve them
+                    updated_params['mu'] = new_mu
+                    env.update_params(updated_params, index=0)  # Update params for agent 0
+                    # Reset environment to apply new parameters
+                    obs, step_reward, done, info = env.reset(np.array([[conf.sx, conf.sy, conf.stheta]]))
+                    env.render()
+                    laptime = 0.0  # Reset laptime for new lap
+                    prev_pos = np.array([conf.sx, conf.sy])  # Reset prev_pos after reset
+                    crossed_start = False  # Reset crossed_start flag
+                    for key, value in env.params.items():
+                        print(f"  {key}: {value}")
+                    continue  # Skip to next iteration to avoid processing old state
+
+                crossed_start = True
+        elif dist_to_start > 1.0:  # Reset when car moves away from start line
+            crossed_start = False
+
+        prev_pos = current_pos  # Update previous position
+
     print('Sim elapsed time:', laptime, 'Real elapsed time:', time.time()-start)
+    # env.close()
 
 if __name__ == '__main__':
     main()
