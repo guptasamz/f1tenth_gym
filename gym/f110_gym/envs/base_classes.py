@@ -34,6 +34,7 @@ import numpy as np
 from numba import njit
 
 from f110_gym.envs.dynamic_models import vehicle_dynamics_st, pid
+from f110_gym.envs.dynamic_models import accl_constraints, steering_constraint
 from f110_gym.envs.laser_models import ScanSimulator2D, check_ttc_jit, ray_cast
 from f110_gym.envs.collision_models import get_vertices, collision_multiple
 
@@ -280,8 +281,12 @@ class RaceCar(object):
 
         # steering angle velocity input to steering velocity acceleration input
         accl, sv = pid(vel, steer, self.state[3], self.state[2], self.params['sv_max'], self.params['a_max'], self.params['v_max'], self.params['v_min'])
-        self.accel = accl
-        self.steer_angle_vel = sv
+ 
+        u = np.array([steering_constraint(self.state[2], sv, self.params['s_min'], self.params['s_max'], self.params['sv_min'], self.params['sv_max']), 
+                      accl_constraints(self.state[2], accl, self.params['v_switch'], self.params['a_max'], self.params['v_min'], self.params['v_max'])])
+        self.accel = u[1]
+        self.steer_angle_vel = u[0]
+
         if self.integrator is Integrator.RK4:
             # RK4 integration
             k1 = vehicle_dynamics_st(
