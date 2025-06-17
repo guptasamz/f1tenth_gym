@@ -281,7 +281,7 @@ class RaceCar(object):
         # steering angle velocity input to steering velocity acceleration input
         accl, sv = pid(vel, steer, self.state[3], self.state[2], self.params['sv_max'], self.params['a_max'], self.params['v_max'], self.params['v_min'])
         self.accel = accl
-        self.steer_angle_vel = steer - self.state[2]
+        self.steer_angle_vel = sv
         if self.integrator is Integrator.RK4:
             # RK4 integration
             k1 = vehicle_dynamics_st(
